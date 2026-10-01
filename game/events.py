@@ -1,4 +1,4 @@
-"""Выбор и применение случайного события."""
+"""Выбор, применение и показ одного случайного события за ход."""
 
 import random
 
@@ -6,44 +6,76 @@ import config
 from game.state import (
     Event,
     GameState,
-    add_log,
     Phase,
+    add_log,
     change_resources,
     check_result,
+    format_changes,
+    next_player,
 )
 
 
-def start_turn(game: GameState) -> None:
-    """Ровно один раз разыграть событие текущего хода."""
-    if game["phase"] != "start":
-        return
-
+def choose_event() -> Event:
+    """Выбор равновероятного семейства, затем исхода с вероятностью 50%."""
     family = random.choice(config.EVENT_FAMILIES)
     spec = (
         family[0]
         if random.random() < config.POSITIVE_EVENT_PROBABILITY
         else family[1]
     )
-    event: Event = {
-        "id": spec[0],
-        "title": spec[1],
-        "type": spec[2],
-        "changes": spec[3],
+    event_id, title, event_type, changes = spec
+    return {
+        "id": event_id,
+        "title": title,
+        "type": event_type,
+        "changes": changes.copy(),
+        "story": config.EVENT_STORIES[event_id],
+        "actual_changes": {},
     }
-    player = game["players"][game["current"]]
-    actual = change_resources(player, event["changes"])
-    effects = ", ".join(
-        f"{config.RESOURCE_NAMES[key]}: {amount:+d}"
-        for key, amount in actual.items()
-    )
-    game["event"] = event
-    game["message"] = f"{event['title']} ({effects})"
-    add_log(game, f"{player['name']}: {game['message']}")
-    if not check_result(game):
-        if player["alive"]:
-            next_phase: Phase = "action"
-        else:
-            next_phase: Phase = "result"
-            game["message"] = "Ваш клад выбыл. Передайте ход."
 
-        game["phase"] = next_phase
+
+def start_turn(game: GameState) -> None:
+    """Применение события текущего клана 1 раз и проверка результата."""
+    if game["phase"] != "start":
+        return
+    if check_result(game):
+        return
+    player = game["players"][game["current"]]
+    if not player["alive"]:
+        result_phase: Phase = "result"
+        game["phase"] = result_phase
+        next_player(game)
+        return
+
+    event = choose_event()
+    event_phase: Phase = "event"
+    game["phase"] = event_phase
+    game["selected_action"] = None
+    game["selected_target"] = None
+    actual = change_resources(player, event["changes"])
+    event["actual_changes"] = actual
+    game["event"] = event
+    game["message"] = format_changes(actual)
+    add_log(
+        game,
+        f"{player['name']}: {event['title']} "
+        f"({event['type']}; {format_changes(actual)}).",
+    )
+
+    if check_result(game):
+        return
+    if not player["alive"]:
+        result_phase: Phase = "result"
+        game["phase"] = result_phase
+        next_player(game)
+
+
+def finish_event(game: GameState) -> None:
+    """Закрытие показа события без повторного применения его эффектов."""
+    if game["phase"] != "event":
+        return
+    if check_result(game):
+        return
+    action_phase: Phase = "action"
+    game["phase"] = action_phase
+    game["message"] = "Выберите действие."

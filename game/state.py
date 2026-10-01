@@ -14,7 +14,14 @@ class Player(TypedDict):
     alive: bool
 
 
-class Event(TypedDict):
+class EventDetails(TypedDict, total=False):
+    """Дополнительные данные для карточки события."""
+
+    story: str
+    actual_changes: dict[str, int]
+
+
+class Event(EventDetails):
     """Случайное событие и его эффект."""
 
     id: str
@@ -23,7 +30,7 @@ class Event(TypedDict):
     changes: dict[str, int]
 
 
-Phase = Literal["start", "action", "result", "game_over"]
+Phase = Literal["start", "event", "action", "target", "result", "game_over"]
 
 
 class GameState(TypedDict):
@@ -33,6 +40,7 @@ class GameState(TypedDict):
     current: int
     phase: Phase
     event: Event | None
+    selected_action: str | None
     selected_target: int | None
     winner: str | None
     message: str
@@ -40,7 +48,7 @@ class GameState(TypedDict):
 
 
 def new_game() -> GameState:
-    """Создать независимое состояние новой партии."""
+    """Создание независимого состояния новой партии."""
     return {
         "players": [
             {
@@ -54,6 +62,7 @@ def new_game() -> GameState:
         "current": 0,
         "phase": "start",
         "event": None,
+        "selected_action": None,
         "selected_target": None,
         "winner": None,
         "message": "Игрок 1: нажмите «Начать ход».",
@@ -75,7 +84,7 @@ def prestige(player: Player) -> int:
 def change_resources(
     player: Player, changes: dict[str, int]
 ) -> dict[str, int]:
-    """Применение изменения события и возвращение фактических изменений."""
+    """Применение изменений и возвращение фактической разницы ресурсов."""
     actual: dict[str, int] = {}
     for resource, amount in changes.items():
         old_value = player["resources"][resource]
@@ -90,22 +99,46 @@ def add_log(game: GameState, message: str) -> None:
     game["log"].append(message)
 
 
+def format_changes(changes: dict[str, int]) -> str:
+    """Описание фактических изменений ресурсов для сообщения журнала."""
+    if not changes:
+        return "ресурсы без изменений"
+    return ", ".join(
+        f"{config.RESOURCE_NAMES[key]}: {amount:+d}"
+        for key, amount in changes.items()
+    )
+
+
 def check_result(game: GameState) -> bool:
-    """Проверка поражения раньше победы после полного эффекта хода."""
+    """Проверка выбывания каждого клана, определение результата."""
+    if game["phase"] == "game_over":
+        return True
+
     for player in game["players"]:
         resources = player["resources"]
-        if player["alive"] and (
-            resources["smuta"] >= config.PANIC_DEFEAT
-            or resources["people"] <= config.MIN_RESOURCE
-        ):
+        if not player["alive"]:
+            continue
+        reasons: list[str] = []
+        if resources["smuta"] >= config.PANIC_DEFEAT:
+            reasons.append(
+                f"паника {resources['smuta']} >= {config.PANIC_DEFEAT}"
+            )
+        if resources["people"] <= config.MIN_RESOURCE:
+            reasons.append("не осталось белок")
+        if reasons:
             player["alive"] = False
-            add_log(game, f"{player['name']} выбыл!")
+            reason = "; ".join(reasons)
+            add_log(game, f"{player['name']} выбыл: {reason}.")
 
+    result: str | None = None
     alive = [player for player in game["players"] if player["alive"]]
     if not alive:
-        game["winner"] = "Ничья: все кланы выбыли."
+        result = "Ничья: все кланы выбыли."
     elif len(alive) == 1:
-        game["winner"] = f"Победил клан «{alive[0]['name']}»!"
+        result = (
+            f"Победил клан «{alive[0]['name']}»: "
+            "остался единственным действующим кланом."
+        )
     else:
         candidates = [
             player for player in alive
@@ -117,23 +150,34 @@ def check_result(game: GameState) -> bool:
                 player for player in candidates
                 if prestige(player) == maximum
             ]
-            game["winner"] = (
-                f"Победил клан «{leaders[0]['name']}»!"
+            result = (
+                f"Победил клан «{leaders[0]['name']}»: "
+                f"престиж {maximum} >= {config.PRESTIGE_VICTORY}."
                 if len(leaders) == 1
-                else "Ничья: лидеры набрали одинаковый престиж."
+                else (
+                    "Ничья: несколько кланов достигли порога победы "
+                    f"с одинаковым максимальным престижем {maximum}."
+                )
             )
 
-    if game["winner"] is not None:
+    if result is not None:
+        game["winner"] = result
         finished_phase: Phase = "game_over"
         game["phase"] = finished_phase
-        game["message"] = game["winner"]
-        add_log(game, game["winner"])
+        game["selected_action"] = None
+        game["selected_target"] = None
+        game["message"] = result
+        add_log(game, result)
         return True
     return False
 
 
 def next_player(game: GameState) -> None:
-    """Передача хода следующему действующему клану."""
+    """Передача завершённого хода без запуска события следующего клана."""
+    if game["phase"] != "result":
+        return
+    if check_result(game):
+        return
     for step in range(1, len(game["players"]) + 1):
         index = (game["current"] + step) % len(game["players"])
         if game["players"][index]["alive"]:
@@ -141,6 +185,7 @@ def next_player(game: GameState) -> None:
             start_phase: Phase = "start"
             game["phase"] = start_phase
             game["event"] = None
+            game["selected_action"] = None
             game["selected_target"] = None
             game["message"] = f"Игрок {index + 1}: нажмите «Начать ход»."
             return
