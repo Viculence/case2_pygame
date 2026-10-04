@@ -75,27 +75,43 @@ def draw_players(
         outline = (
             config.ACCENT if index == game["current"] else player["color"]
         )
+        outline_width = 4 if index == game["current"] else config.OUTLINE_WIDTH
         pygame.draw.rect(screen, outline, rect,
-                         width=config.OUTLINE_WIDTH,
+                         width=outline_width,
                          border_radius=config.CORNER_RADIUS)
+
         name_color = player["color"] if player["alive"] else config.MUTED
         write(screen, text_font, f"{index + 1}. {player['name']}",
               x + config.PANEL_PADDING, y + config.PANEL_TITLE_OFFSET,
               name_color)
+
         if not player["alive"]:
             write(screen, small_font, "ВЫБЫЛ",
                   x + config.PANEL_BADGE_OFFSET,
                   y + config.PANEL_TITLE_OFFSET, config.ACCENT)
+
         res = player["resources"]
-        lines = (
-            f"Орехи: {res['grain']}      Шишкоины: {res['money']}",
-            f"Дупла: {res['land']}      Белки: {res['people']}",
-            f"Паника: {res['smuta']}      Престиж: {scores[index]}",
+        icons = ("🌰", "🌲", "🕳️", "🐿️", "❗", "🏆")
+        labels = ("Орехи", "Шишки", "Дуппа", "Белки", "Паника", "Престиж")
+        values = (
+            res["grain"], res["money"], res["land"],
+            res["people"], res["smuta"], scores[index],
         )
-        for row, line in enumerate(lines):
-            write(screen, small_font, line, x + config.PANEL_PADDING,
-                  y + config.PANEL_STATS_TOP
-                  + row * config.PANEL_TEXT_STEP)
+
+        icon_font = pygame.font.SysFont("segoeuiemoji", 22)
+        cell_width = (config.PANEL_WIDTH - config.PANEL_PADDING * 2) // 6
+
+        for i, (icon, label, value) in enumerate(zip(icons, labels, values)):
+            cx = x + config.PANEL_PADDING + i * cell_width + cell_width // 2
+            icon_surface = icon_font.render(icon, True, config.WHITE)
+            screen.blit(icon_surface,
+                        icon_surface.get_rect(center=(cx, y + 78)))
+            value_surface = small_font.render(str(value), True, config.WHITE)
+            screen.blit(value_surface,
+                        value_surface.get_rect(center=(cx, y + 105)))
+            label_surface = small_font.render(label, True, config.MUTED)
+            screen.blit(label_surface,
+                        label_surface.get_rect(center=(cx, y + 128)))
 
 
 def draw_controls(
@@ -116,10 +132,40 @@ def draw_controls(
                 config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
             )),
         ))
+    elif phase == "event":
+        controls.append((
+            "continue",
+            button(screen, text_font, "К действиям", pygame.Rect(
+                config.PAGE_MARGIN, config.PRIMARY_Y,
+                config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
+            )),
+        ))
     elif phase == "action":
         write(screen, small_font,
-              "Торговля: 3 шишкоина за 4 ореха соперника.",
+              "Выберите действие:",
               config.PAGE_MARGIN, config.ACTION_DESCRIPTION_Y)
+        position = 0
+        action_step = 130
+        action_width = 122
+        for action_id, action in config.ACTIONS.items():
+            rect = pygame.Rect(
+                config.PAGE_MARGIN + position * action_step,
+                config.TARGET_Y,
+                action_width,
+                config.TARGET_BUTTON_HEIGHT,
+            )
+            controls.append((
+                f"action:{action_id}",
+                button(screen, small_font, action["title"], rect),
+            ))
+            position += 1
+    elif phase == "target":
+        action_id = game["selected_action"]
+        if action_id:
+            action_title = config.ACTIONS[action_id]["title"]
+            write(screen, small_font,
+                  f"{action_title}: выберите цель.",
+                  config.PAGE_MARGIN, config.ACTION_DESCRIPTION_Y)
         position = 0
         for index, player in enumerate(game["players"]):
             if index == game["current"]:
@@ -135,27 +181,27 @@ def draw_controls(
             controls.append((
                 f"target:{index}",
                 button(screen, small_font, label, rect,
-                       index in targets,
+                       player["alive"],
                        game["selected_target"] == index),
             ))
             position += 1
-        if targets:
-            controls.append((
-                "confirm",
-                button(screen, small_font, "Подтвердить торговлю",
-                       pygame.Rect(config.PAGE_MARGIN, config.CONFIRM_Y,
-                                   config.CONFIRM_WIDTH,
-                                   config.TARGET_BUTTON_HEIGHT),
-                       game["selected_target"] in targets),
-            ))
-        else:
-            controls.append((
-                "skip",
-                button(screen, small_font, "Пропустить действие",
-                       pygame.Rect(config.PAGE_MARGIN, config.CONFIRM_Y,
-                                   config.CONFIRM_WIDTH,
-                                   config.TARGET_BUTTON_HEIGHT)),
-            ))
+        controls.append((
+            "back",
+            button(screen, small_font, "Назад",
+                   pygame.Rect(config.PAGE_MARGIN, config.CONFIRM_Y,
+                               config.CONFIRM_WIDTH // 2 - 5,
+                               config.TARGET_BUTTON_HEIGHT)),
+        ))
+        controls.append((
+            "confirm",
+            button(screen, small_font, "Подтвердить",
+                   pygame.Rect(
+                       config.PAGE_MARGIN + config.CONFIRM_WIDTH // 2 + 5,
+                       config.CONFIRM_Y,
+                       config.CONFIRM_WIDTH // 2 - 5,
+                       config.TARGET_BUTTON_HEIGHT),
+                   game["selected_target"] is not None),
+        ))
     elif phase == "result":
         controls.append((
             "next",
@@ -192,8 +238,12 @@ def draw(
           config.PAGE_MARGIN, config.SUBTITLE_Y, config.MUTED)
     draw_players(screen, game, scores, fonts)
     phase_names = {
-        "start": "Начало хода", "action": "Выбор цели",
-        "result": "Итог хода", "game_over": "Конец партии",
+        "start": "Начало хода",
+        "event": "Событие",
+        "action": "Выбор цели",
+        "target": "Выбор цели",
+        "result": "Итог хода",
+        "game_over": "Конец партии",
     }
     write(screen, text_font,
           f"Игрок {game['current'] + 1} · {phase_names[game['phase']]}",
@@ -211,8 +261,16 @@ def draw(
     write(screen, small_font, "ЖУРНАЛ (последние пять записей)",
           config.LOG_X, config.LOG_TITLE_Y, config.MUTED)
     for row, entry in enumerate(game["log"][-config.LOG_VISIBLE:]):
+        y = config.LOG_ENTRY_Y + row * config.LOG_STEP
+        marker_color = config.MUTED
+        clan_names = [clan[0] for clan in config.CLANS]
+        for i, clan_name in enumerate(clan_names):
+            if clan_name in entry:
+                marker_color = config.CLANS[i][1]
+                break
+        pygame.draw.circle(screen, marker_color, (config.LOG_X - 14, y + 9), 5)
         write(screen, small_font, entry,
-              config.LOG_X, config.LOG_ENTRY_Y + row * config.LOG_STEP,
+              config.LOG_X, y,
               max_width=config.LOG_WIDTH)
     pygame.display.flip()
     return controls
