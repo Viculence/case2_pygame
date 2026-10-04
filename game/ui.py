@@ -230,7 +230,14 @@ def draw(
 ) -> Controls:
     """Нарисовать кадр, где игровое состояние не изменяется."""
     title_font, text_font, small_font = fonts
-    screen.fill(config.BACKGROUND)
+    try:
+        background = pygame.image.load("assets/background.jpg").convert()
+        background = pygame.transform.scale(
+            background, (config.WIDTH, config.HEIGHT)
+        )
+        screen.blit(background, (0, 0))
+    except (pygame.error, FileNotFoundError):
+        screen.fill(config.BACKGROUND)
     write(screen, title_font, "Академгородок: белки захватили науку",
           config.PAGE_MARGIN, config.TITLE_Y)
     write(screen, small_font,
