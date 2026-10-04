@@ -243,7 +243,7 @@ BUTTON_RADIUS = 9
 CURRENT_Y = 465
 EVENT_Y = 498
 MESSAGE_Y = 526
-ACTION_DESCRIPTION_Y = 560
+ACTION_DESCRIPTION_Y = 630
 # Размеры кнопок.
 PRIMARY_Y = 565
 TARGET_Y = 589
@@ -263,7 +263,7 @@ LOG_WIDTH = 445
 LOG_VISIBLE = 5
 # Ограничение названий, положение заголовков.
 TARGET_NAME_LENGTH = 14
-FONT_FAMILIES = "arial,dejavusans,liberationsans"
+FONT_FAMILIES = "segoeui,calibri,arial"
 TITLE_Y = 18
 SUBTITLE_Y = 63
 

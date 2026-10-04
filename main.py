@@ -18,6 +18,9 @@ def main() -> None:
         pygame.font.Font(font_path, config.TEXT_SIZE),
         pygame.font.Font(font_path, config.SMALL_SIZE),
     )
+    fonts[0].set_bold(True)
+    fonts[1].set_bold(True)
+    fonts[2].set_bold(True)
     clock = pygame.time.Clock()
     game = new_game()
     running = True
