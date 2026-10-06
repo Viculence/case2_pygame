@@ -4,6 +4,7 @@ import pygame
 
 import config
 from game.state import GameState
+from game.actions import has_legal_action
 
 Controls = list[tuple[str, pygame.Rect]]
 Fonts = tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]
@@ -142,21 +143,30 @@ def draw_controls(
             )),
         ))
     elif phase == "action":
-        position = 0
-        action_step = 130
-        action_width = 122
-        for action_id, action in config.ACTIONS.items():
-            rect = pygame.Rect(
-                config.PAGE_MARGIN + position * action_step,
-                config.TARGET_Y + 5,
-                action_width,
-                config.TARGET_BUTTON_HEIGHT,
-            )
+        if not has_legal_action(game):
             controls.append((
-                f"action:{action_id}",
-                button(screen, small_font, action["title"], rect),
+                "skip",
+                button(screen, small_font, "Пропустить действие",
+                       pygame.Rect(config.PAGE_MARGIN, config.TARGET_Y + 5,
+                                   config.CONFIRM_WIDTH,
+                                   config.TARGET_BUTTON_HEIGHT)),
             ))
-            position += 1
+        else:
+            position = 0
+            action_step = 130
+            action_width = 122
+            for action_id, action in config.ACTIONS.items():
+                rect = pygame.Rect(
+                    config.PAGE_MARGIN + position * action_step,
+                    config.TARGET_Y + 5,
+                    action_width,
+                    config.TARGET_BUTTON_HEIGHT,
+                )
+                controls.append((
+                    f"action:{action_id}",
+                    button(screen, small_font, action["title"], rect),
+                ))
+                position += 1
     elif phase == "target":
         action_id = game["selected_action"]
         if action_id:
@@ -241,8 +251,8 @@ def draw(
           config.PAGE_MARGIN, config.TITLE_Y)
     draw_players(screen, game, scores, fonts)
     if game["phase"] == "game_over":
-        write(screen, title_font, "🏆 ИГРА ЗАВЕРШЕНА",
-              config.PAGE_MARGIN, config.CURRENT_Y, config.ACCENT)
+        write(screen, title_font, "ИГРА ЗАВЕРШЕНА",
+              config.PAGE_MARGIN, config.CURRENT_Y - 30, config.ACCENT)
         if game["winner"]:
             winner_text = game["winner"]
             winner_lines = []
@@ -257,7 +267,7 @@ def draw(
                 winner_lines.append(line)
             for i, line in enumerate(winner_lines):
                 write(screen, small_font, line,
-                      config.PAGE_MARGIN, config.CURRENT_Y + 55 + i * 26,
+                      config.PAGE_MARGIN, config.CURRENT_Y + 5 + i * 26,
                       config.WHITE)
     else:
         phase_names = {
@@ -270,7 +280,7 @@ def draw(
         write(screen, text_font,
               f"Игрок {game['current'] + 1} · {phase_names[game['phase']]}",
               config.PAGE_MARGIN, config.CURRENT_Y)
-    if game["event"] is not None:
+    if game["event"] is not None and game["phase"] != "game_over":
         event = game["event"]
         event_rect = pygame.Rect(
             config.PAGE_MARGIN, config.EVENT_Y - 5,
