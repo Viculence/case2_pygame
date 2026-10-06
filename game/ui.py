@@ -129,7 +129,7 @@ def draw_controls(
         controls.append((
             "start",
             button(screen, text_font, "Начать ход", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y,
+                config.PAGE_MARGIN, config.PRIMARY_Y + 15,
                 config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
             )),
         ))
@@ -137,7 +137,7 @@ def draw_controls(
         controls.append((
             "continue",
             button(screen, text_font, "К действиям", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y,
+                config.PAGE_MARGIN, config.PRIMARY_Y + 25,
                 config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
             )),
         ))
@@ -148,7 +148,7 @@ def draw_controls(
         for action_id, action in config.ACTIONS.items():
             rect = pygame.Rect(
                 config.PAGE_MARGIN + position * action_step,
-                config.TARGET_Y,
+                config.TARGET_Y + 5,
                 action_width,
                 config.TARGET_BUTTON_HEIGHT,
             )
@@ -167,7 +167,7 @@ def draw_controls(
                 continue
             rect = pygame.Rect(
                 config.PAGE_MARGIN + position * config.TARGET_STEP,
-                config.TARGET_Y,
+                config.TARGET_Y + 5,
                 config.TARGET_WIDTH,
                 config.TARGET_BUTTON_HEIGHT,
             )
@@ -183,7 +183,7 @@ def draw_controls(
         controls.append((
             "back",
             button(screen, small_font, "Назад",
-                   pygame.Rect(config.PAGE_MARGIN, config.CONFIRM_Y,
+                   pygame.Rect(config.PAGE_MARGIN, config.CONFIRM_Y + 5,
                                config.CONFIRM_WIDTH // 2 - 5,
                                config.TARGET_BUTTON_HEIGHT)),
         ))
@@ -192,7 +192,7 @@ def draw_controls(
             button(screen, small_font, "Подтвердить",
                    pygame.Rect(
                        config.PAGE_MARGIN + config.CONFIRM_WIDTH // 2 + 5,
-                       config.CONFIRM_Y,
+                       config.CONFIRM_Y + 5,
                        config.CONFIRM_WIDTH // 2 - 5,
                        config.TARGET_BUTTON_HEIGHT),
                    game["selected_target"] is not None),
@@ -201,7 +201,7 @@ def draw_controls(
         controls.append((
             "next",
             button(screen, text_font, "Передать ход", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y,
+                config.PAGE_MARGIN, config.PRIMARY_Y + 25,
                 config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
             )),
         ))
@@ -209,7 +209,7 @@ def draw_controls(
         controls.append((
             "restart",
             button(screen, text_font, "Новая игра", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y,
+                config.PAGE_MARGIN, config.PRIMARY_Y + 15,
                 config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
             )),
         ))
@@ -274,7 +274,7 @@ def draw(
         event = game["event"]
         event_rect = pygame.Rect(
             config.PAGE_MARGIN, config.EVENT_Y - 5,
-            560, 120,
+            560, 90,
         )
         pygame.draw.rect(screen, config.PANEL, event_rect,
                          border_radius=config.CORNER_RADIUS)
@@ -288,7 +288,7 @@ def draw(
             squirrel_img = pygame.image.load(
                 "assets/squirrel_fire.jpg"
             ).convert_alpha()
-            squirrel_img = pygame.transform.scale(squirrel_img, (100, 100))
+            squirrel_img = pygame.transform.scale(squirrel_img, (77, 77))
             squirrel_y = config.EVENT_Y + 5
             screen.blit(squirrel_img,
                         (config.PAGE_MARGIN + 5, squirrel_y))
@@ -308,9 +308,21 @@ def draw(
                 short_message += "."
         else:
             short_message = game["message"]
-        write(screen, small_font, short_message,
-              config.PAGE_MARGIN + 145, config.EVENT_Y + 30,
+        words = short_message.split()
+        line1 = ""
+        line2 = ""
+        for word in words:
+            if len(line1 + " " + word) <= 35 and not line2:
+                line1 = (line1 + " " + word).strip()
+            else:
+                line2 = (line2 + " " + word).strip()
+        write(screen, small_font, line1,
+              config.PAGE_MARGIN + 145, config.EVENT_Y + 22,
               config.ACCENT)
+        if line2:
+            write(screen, small_font, line2,
+                  config.PAGE_MARGIN + 145, config.EVENT_Y + 45,
+                  config.ACCENT)
     else:
         if game["phase"] != "game_over":
             write(screen, small_font, game["message"],
