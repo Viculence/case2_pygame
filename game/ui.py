@@ -1,358 +1,281 @@
-"""Отрисовка только игрового экрана и интерактивных областей."""
-
+"""Readable game dashboard. Presentation only; rules remain in game modules."""
+from functools import lru_cache
+from pathlib import Path
 import pygame
-
 import config
-from game.state import GameState
-from game.actions import has_legal_action
+from game.actions import action_reason, available_targets, has_legal_action, target_reason
+from game.state import prestige
 
+WIDTH, HEIGHT = 1440, 960
+Fonts = tuple
 Controls = list[tuple[str, pygame.Rect]]
-Fonts = tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]
+BG = (231, 238, 214)
+PANEL = (251, 249, 232)
+INNER = (232, 238, 214)
+TEXT = (39, 59, 39)
+MUTED = (91, 108, 78)
+GREEN = (48, 109, 52)
+RED = (171, 61, 43)
+GOLD = (139, 96, 30)
+CLAN_COLORS = ((148, 84, 29), (48, 104, 106), (65, 112, 49), (118, 79, 119))
+LABELS = {'grain': 'Орехи', 'money': 'Шишкоины', 'land': 'Дупла', 'people': 'Белки', 'smuta': 'Паника'}
+_report = None
+_log_scroll = 0
+_pointer = (-1, -1)
 
+def set_pointer(pos):
+    global _pointer
+    _pointer = pos
 
-def write(
-    screen: pygame.Surface,
-    font: pygame.font.Font,
-    value: str,
-    x: int,
-    y: int,
-    color: config.Color = config.WHITE,
-    max_width: int | None = None,
-) -> None:
-    """Нарисовать текст, обрезав длинную строку по ширине."""
-    if (
-        max_width is not None
-        and font.render(value, True, color).get_width() > max_width
-    ):
-        while (
-            value
-            and font.render(f"{value}…", True, color).get_width() > max_width
-        ):
-            value = value[:-1]
-        value += "…"
-    screen.blit(font.render(value, True, color), (x, y))
+@lru_cache(maxsize=32)
+def font(size=18, bold=False):
+    return pygame.font.SysFont('segoeui,dejavusans,arial', size, bold=bold)
 
-
-def button(
-    screen: pygame.Surface,
-    font: pygame.font.Font,
-    label: str,
-    rect: pygame.Rect,
-    enabled: bool = True,
-    selected: bool = False,
-) -> pygame.Rect:
-    """Нарисовать кнопку и вернуть её область клика."""
-    color = (
-        config.ACCENT if selected
-        else config.BUTTON_ACTIVE if enabled
-        else config.BUTTON_INACTIVE
-    )
-    pygame.draw.rect(screen, color, rect, border_radius=config.BUTTON_RADIUS)
-    text_color = (
-        config.BACKGROUND if selected
-        else config.WHITE if enabled
-        else config.MUTED
-    )
-    text_surface = font.render(label, True, text_color)
-    screen.blit(text_surface, text_surface.get_rect(center=rect.center))
-    return rect
-
-
-def draw_players(
-    screen: pygame.Surface, game: GameState, scores: list[int], fonts: Fonts
-) -> None:
-    """Нарисовать панели всех кланов."""
-    _, text_font, small_font = fonts
-    for index, player in enumerate(game["players"]):
-        x = config.PAGE_MARGIN + (index % config.PANEL_COLUMNS) * (
-            config.PANEL_COLUMN_STEP
-        )
-        y = config.PANEL_TOP + (index // config.PANEL_COLUMNS) * (
-            config.PANEL_ROW_STEP
-        )
-        rect = pygame.Rect(x, y, config.PANEL_WIDTH, config.PANEL_HEIGHT)
-        pygame.draw.rect(screen, config.PANEL, rect,
-                         border_radius=config.CORNER_RADIUS)
-        outline = (
-            config.ACCENT if index == game["current"] else player["color"]
-        )
-        outline_width = 4 if index == game["current"] else config.OUTLINE_WIDTH
-        pygame.draw.rect(screen, outline, rect,
-                         width=outline_width,
-                         border_radius=config.CORNER_RADIUS)
-
-        name_color = player["color"] if player["alive"] else config.MUTED
-        write(screen, text_font, f"{index + 1}. {player['name']}",
-              x + config.PANEL_PADDING, y + config.PANEL_TITLE_OFFSET,
-              name_color)
-
-        if not player["alive"]:
-            write(screen, small_font, "ВЫБЫЛ",
-                  x + config.PANEL_BADGE_OFFSET,
-                  y + config.PANEL_TITLE_OFFSET, config.ACCENT)
-
-        res = player["resources"]
-        icons = ("🌰", "🌲", "🕳️", "🐿️", "❗", "🏆")
-        labels = ("Орехи", "Шишки", "Дупла", "Белки", "Паника", "Престиж")
-        values = (
-            res["grain"], res["money"], res["land"],
-            res["people"], res["smuta"], scores[index],
-        )
-
-        icon_font = pygame.font.SysFont("segoeuiemoji", 22)
-        cell_width = (config.PANEL_WIDTH - config.PANEL_PADDING * 2) // 6
-        clan_color = player["color"] if player["alive"] else config.MUTED
-
-        for i, (icon, label, value) in enumerate(zip(icons, labels, values)):
-            cx = x + config.PANEL_PADDING + i * cell_width + cell_width // 2
-            icon_surface = icon_font.render(icon, True, clan_color)
-            screen.blit(icon_surface,
-                        icon_surface.get_rect(center=(cx, y + 78)))
-            value_surface = small_font.render(str(value), True, clan_color)
-            screen.blit(value_surface,
-                        value_surface.get_rect(center=(cx, y + 105)))
-            label_surface = small_font.render(label, True, clan_color)
-            screen.blit(label_surface,
-                        label_surface.get_rect(center=(cx, y + 128)))
-
-
-def draw_controls(
-    screen: pygame.Surface,
-    game: GameState,
-    targets: list[int],
-    fonts: Fonts,
-) -> Controls:
-    """Нарисовать элементы управления и вернуть их области клика."""
-    _, text_font, small_font = fonts
-    controls: Controls = []
-    phase = game["phase"]
-    if phase == "start":
-        controls.append((
-            "start",
-            button(screen, text_font, "Начать ход", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y + 15,
-                config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
-            )),
-        ))
-    elif phase == "event":
-        controls.append((
-            "continue",
-            button(screen, text_font, "К действиям", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y + 25,
-                config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
-            )),
-        ))
-    elif phase == "action":
-        if not has_legal_action(game):
-            controls.append((
-                "skip",
-                button(screen, small_font, "Пропустить действие",
-                       pygame.Rect(config.PAGE_MARGIN, config.TARGET_Y + 5,
-                                   config.CONFIRM_WIDTH,
-                                   config.TARGET_BUTTON_HEIGHT)),
-            ))
-        else:
-            position = 0
-            action_step = 130
-            action_width = 122
-            for action_id, action in config.ACTIONS.items():
-                rect = pygame.Rect(
-                    config.PAGE_MARGIN + position * action_step,
-                    config.TARGET_Y + 5,
-                    action_width,
-                    config.TARGET_BUTTON_HEIGHT,
-                )
-                controls.append((
-                    f"action:{action_id}",
-                    button(screen, small_font, action["title"], rect),
-                ))
-                position += 1
-    elif phase == "target":
-        action_id = game["selected_action"]
-        if action_id:
-            action_title = config.ACTIONS[action_id]["title"]
-        position = 0
-        for index, player in enumerate(game["players"]):
-            if index == game["current"]:
-                continue
-            rect = pygame.Rect(
-                config.PAGE_MARGIN + position * config.TARGET_STEP,
-                config.TARGET_Y + 5,
-                config.TARGET_WIDTH,
-                config.TARGET_BUTTON_HEIGHT,
-            )
-            short_name = player["name"][:config.TARGET_NAME_LENGTH]
-            label = f"{index + 1}. {short_name}"
-            controls.append((
-                f"target:{index}",
-                button(screen, small_font, label, rect,
-                       player["alive"],
-                       game["selected_target"] == index),
-            ))
-            position += 1
-        controls.append((
-            "back",
-            button(screen, small_font, "Назад",
-                   pygame.Rect(config.PAGE_MARGIN, config.CONFIRM_Y + 5,
-                               config.CONFIRM_WIDTH // 2 - 5,
-                               config.TARGET_BUTTON_HEIGHT)),
-        ))
-        controls.append((
-            "confirm",
-            button(screen, small_font, "Подтвердить",
-                   pygame.Rect(
-                       config.PAGE_MARGIN + config.CONFIRM_WIDTH // 2 + 5,
-                       config.CONFIRM_Y + 5,
-                       config.CONFIRM_WIDTH // 2 - 5,
-                       config.TARGET_BUTTON_HEIGHT),
-                   game["selected_target"] is not None),
-        ))
-    elif phase == "result":
-        controls.append((
-            "next",
-            button(screen, text_font, "Передать ход", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y + 25,
-                config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
-            )),
-        ))
-    else:
-        controls.append((
-            "restart",
-            button(screen, text_font, "Новая игра", pygame.Rect(
-                config.PAGE_MARGIN, config.PRIMARY_Y + 15,
-                config.PRIMARY_WIDTH, config.BUTTON_HEIGHT,
-            )),
-        ))
-    return controls
-
-
-def draw(
-    screen: pygame.Surface,
-    game: GameState,
-    targets: list[int],
-    scores: list[int],
-    fonts: Fonts,
-) -> Controls:
-    """Нарисовать кадр, где игровое состояние не изменяется."""
-    title_font, text_font, small_font = fonts
-    try:
-        background = pygame.image.load("assets/background.jpg").convert()
-        background = pygame.transform.scale(
-            background, (config.WIDTH, config.HEIGHT)
-        )
-        screen.blit(background, (0, 0))
-    except (pygame.error, FileNotFoundError):
-        screen.fill(config.BACKGROUND)
-    bold_title_font = pygame.font.SysFont(
-        "arial", config.TITLE_SIZE, bold=True,
-    )
-    write(screen, bold_title_font,
-          "Академгородок: белки захватили науку",
-          config.PAGE_MARGIN, config.TITLE_Y)
-    draw_players(screen, game, scores, fonts)
-    if game["phase"] == "game_over":
-        write(screen, title_font, "ИГРА ЗАВЕРШЕНА",
-              config.PAGE_MARGIN, config.CURRENT_Y - 30, config.ACCENT)
-        if game["winner"]:
-            winner_text = game["winner"]
-            winner_lines = []
-            line = ""
-            for word in winner_text.split():
-                if len(line + " " + word) > 50:
-                    winner_lines.append(line)
-                    line = word
-                else:
-                    line = (line + " " + word).strip()
-            if line:
-                winner_lines.append(line)
-            for i, line in enumerate(winner_lines):
-                write(screen, small_font, line,
-                      config.PAGE_MARGIN, config.CURRENT_Y + 5 + i * 26,
-                      config.WHITE)
-    else:
-        phase_names = {
-            "start": "Начало хода",
-            "event": "Событие",
-            "action": "Выбор цели",
-            "target": "Выбор цели",
-            "result": "Итог хода",
-        }
-        write(screen, text_font,
-              f"Игрок {game['current'] + 1} · {phase_names[game['phase']]}",
-              config.PAGE_MARGIN, config.CURRENT_Y)
-    if game["event"] is not None and game["phase"] != "game_over":
-        event = game["event"]
-        event_rect = pygame.Rect(
-            config.PAGE_MARGIN, config.EVENT_Y - 5,
-            560, 90,
-        )
-        pygame.draw.rect(screen, config.PANEL, event_rect,
-                         border_radius=config.CORNER_RADIUS)
-        border_color = (
-            config.ACCENT if event["type"] == "Положительное"
-            else (220, 100, 100)
-        )
-        pygame.draw.rect(screen, border_color, event_rect,
-                         width=2, border_radius=config.CORNER_RADIUS)
-        try:
-            squirrel_img = pygame.image.load(
-                "assets/squirrel_fire.jpg"
-            ).convert_alpha()
-            squirrel_img = pygame.transform.scale(squirrel_img, (77, 77))
-            squirrel_y = config.EVENT_Y + 5
-            screen.blit(squirrel_img,
-                        (config.PAGE_MARGIN + 5, squirrel_y))
-        except (pygame.error, FileNotFoundError):
-            icon = "☀️" if event["type"] == "Положительное" else "🌧️"
-            emoji_font = pygame.font.SysFont("segoeuiemoji", 28)
-            icon_surface = emoji_font.render(icon, True, config.WHITE)
-            screen.blit(icon_surface,
-                        (config.PAGE_MARGIN + 15, config.EVENT_Y + 8))
-        write(screen, small_font,
-              f"Событие: {event['title']}",
-              config.PAGE_MARGIN + 145, config.EVENT_Y + 5)
-
-        if game["phase"] == "result":
-            short_message = game["message"].split(".")[0][:80]
-            if not short_message.endswith("."):
-                short_message += "."
-        else:
-            short_message = game["message"]
-        words = short_message.split()
-        line1 = ""
-        line2 = ""
-        for word in words:
-            if len(line1 + " " + word) <= 35 and not line2:
-                line1 = (line1 + " " + word).strip()
+def lines(text, width, size=18, bold=False):
+    f = font(size, bold)
+    result = []
+    for paragraph in str(text).split('\n'):
+        line = ''
+        for word in paragraph.split():
+            trial = (line + ' ' + word).strip()
+            if line and f.size(trial)[0] > width:
+                result.append(line)
+                line = word
             else:
-                line2 = (line2 + " " + word).strip()
-        write(screen, small_font, line1,
-              config.PAGE_MARGIN + 145, config.EVENT_Y + 22,
-              config.ACCENT)
-        if line2:
-            write(screen, small_font, line2,
-                  config.PAGE_MARGIN + 145, config.EVENT_Y + 45,
-                  config.ACCENT)
-    else:
-        if game["phase"] != "game_over":
-            write(screen, small_font, game["message"],
-                  config.PAGE_MARGIN, config.MESSAGE_Y, config.ACCENT,
-                  config.WIDTH - config.PAGE_MARGIN * config.PANEL_COLUMNS)
+                line = trial
+        result.append(line)
+    return result
 
-    controls = draw_controls(screen, game, targets, fonts)
-    write(screen, small_font, "ЖУРНАЛ (последние пять записей)",
-          config.LOG_X, config.LOG_TITLE_Y, config.MUTED)
-    for row, entry in enumerate(game["log"][-config.LOG_VISIBLE:]):
-        y = config.LOG_ENTRY_Y + row * config.LOG_STEP
-        marker_color = config.MUTED
-        clan_names = [clan[0] for clan in config.CLANS]
-        for i, clan_name in enumerate(clan_names):
-            if clan_name in entry:
-                marker_color = config.CLANS[i][1]
-                break
-        pygame.draw.circle(screen, marker_color, (config.LOG_X - 14, y + 9), 5)
-        write(screen, small_font, entry,
-              config.LOG_X, y,
-              max_width=config.LOG_WIDTH)
-    pygame.display.flip()
+def text(s, value, x, y, width, size=18, color=TEXT, bold=False):
+    for line in lines(value, width, size, bold):
+        s.blit(font(size, bold).render(line, True, color), (x, y))
+        y += size + 5
+    return y
+
+@lru_cache(maxsize=1)
+def background():
+    path = Path(__file__).resolve().parent.parent / 'assets' / 'forest_light.png'
+    try:
+        return pygame.transform.smoothscale(pygame.image.load(str(path)).convert(), (WIDTH, HEIGHT))
+    except (pygame.error, FileNotFoundError):
+        surface = pygame.Surface((WIDTH, HEIGHT))
+        surface.fill(BG)
+        return surface
+
+
+def box(s, rect, color=PANEL, border=None):
+    rect = pygame.Rect(rect)
+    layer = pygame.Surface((rect.w + 8, rect.h + 10), pygame.SRCALPHA)
+    pygame.draw.rect(layer, (40, 61, 27, 24), (3, 5, rect.w, rect.h), border_radius=16)
+    opacity = 240 if color == PANEL else 250
+    pygame.draw.rect(layer, (*color, opacity), (0, 0, rect.w, rect.h), border_radius=16)
+    pygame.draw.rect(layer, (*(border or (192, 204, 166)), 255), (0, 0, rect.w, rect.h), width=2 if border else 1, border_radius=16)
+    s.blit(layer, rect.topleft)
+
+
+@lru_cache(maxsize=24)
+def resource_icon(key, size=24):
+    # Supersampled vector pictograms: no dependence on emoji fonts.
+    scale = 3
+    icon = pygame.Surface((32, 32), pygame.SRCALPHA)
+    brown, light, leaf = (132, 77, 34), (211, 156, 72), (72, 112, 46)
+    if key == 'grain':
+        pygame.draw.ellipse(icon, light, (7, 10, 19, 20))
+        pygame.draw.ellipse(icon, brown, (5, 7, 23, 11))
+        pygame.draw.line(icon, brown, (16, 9), (19, 2), 3)
+        pygame.draw.line(icon, (243, 202, 124), (13, 18), (13, 25), 2)
+    elif key == 'money':
+        pygame.draw.ellipse(icon, brown, (7, 2, 18, 28))
+        for row in range(4):
+            for col in range(2):
+                x=11+col*9-(row%2)*2; y=7+row*6
+                pygame.draw.polygon(icon, light, [(x-4,y),(x,y-3),(x+4,y),(x,y+4)])
+    elif key == 'land':
+        pygame.draw.rect(icon, brown, (6, 6, 21, 25), border_radius=4)
+        pygame.draw.ellipse(icon, (69, 47, 29), (12, 14, 10, 15))
+        pygame.draw.ellipse(icon, leaf, (3, 1, 27, 12))
+        pygame.draw.line(icon, light, (9,16),(9,27),2)
+    elif key == 'people':
+        pygame.draw.ellipse(icon, (193, 103, 37), (17, 3, 14, 24))
+        pygame.draw.ellipse(icon, (226, 144, 58), (6, 13, 16, 17))
+        pygame.draw.circle(icon, (226, 144, 58), (11, 11), 8)
+        pygame.draw.polygon(icon, brown, [(5,6),(6,0),(11,5)])
+        pygame.draw.polygon(icon, brown, [(13,5),(17,0),(18,8)])
+        pygame.draw.circle(icon, TEXT, (8,10),2)
+        pygame.draw.ellipse(icon, (248,220,161), (8,20,9,9))
+    elif key == 'smuta':
+        pygame.draw.polygon(icon, (216,149,43), [(16,1),(31,29),(1,29)])
+        pygame.draw.line(icon, (90,59,25), (16,9),(16,19),3)
+        pygame.draw.circle(icon, (90,59,25),(16,24),2)
+    else:
+        pygame.draw.polygon(icon, (194,146,39), [(16,1),(20,11),(31,12),(23,19),(26,30),(16,24),(6,30),(9,19),(1,12),(12,11)])
+    return pygame.transform.smoothscale(pygame.transform.scale(icon,(32*scale,32*scale)),(size,size))
+
+
+def effect(changes):
+    return ' / '.join(f'{LABELS[k]} {v:+d}' for k, v in changes.items()) or 'Без изменений'
+
+def observe(before, after, command):
+    """Keep actual before/after values, even when the controller clears selection."""
+    global _report, _log_scroll
+    if command == 'restart' or (command == 'next' and after['phase'] == 'start'):
+        _report = None
+    if len(after['log']) > len(before['log']):
+        _log_scroll = 0
+    if command == 'confirm' and len(after['log']) > len(before['log']):
+        aid, target = before['selected_action'], before['selected_target']
+        if aid is not None and target is not None:
+            _report = {'title': config.ACTIONS[aid]['title'], 'rows': []}
+            for i in (before['current'], target):
+                a, b = before['players'][i], after['players'][i]
+                _report['rows'].append((a['name'], a['resources'].copy(), b['resources'].copy(), prestige(a), prestige(b)))
+    if command == 'start':
+        _report = None
+
+def scroll(amount):
+    global _log_scroll
+    _log_scroll = max(0, _log_scroll + amount)
+
+def draw(screen, game, targets=None, scores=None, fonts=None):
+    global _log_scroll
+    screen.blit(background(), (0, 0))
+    controls = []
+    phase = game['phase']
+    actor = game['players'][game['current']]
+    accent = CLAN_COLORS[game['current']]
+    box(screen, (28, 17, 1384, 59))
+    text(screen, 'Академгородок: белки захватили науку', 48, 27, 1344, 29, TEXT, True)
+    # Four persistent resource panels.
+    for i, p in enumerate(game['players']):
+        x, y, w = 28 + i * 350, 94, 334
+        col = CLAN_COLORS[i] if p['alive'] else MUTED
+        box(screen, (x, y, w, 195), PANEL, col if i == game['current'] else None)
+        text(screen, 'Сейчас ходит' if i == game['current'] and p['alive'] else 'Выбыл' if not p['alive'] else '', x+15,y+12,w-30,13,col,True)
+        text(screen, p['name'], x+15,y+35,w-30,18,col,True)
+        for j,(key,label) in enumerate(LABELS.items()):
+            xx = x+15+(j%3)*104
+            yy = y+89+(j//3)*46
+            text(screen,label,xx,yy,103,12,MUTED)
+            val = p['resources'][key]
+            screen.blit(resource_icon(key), (xx, yy+17))
+            text(screen,str(val),xx+29,yy+15,69,23,RED if key=='smuta' and val>=7 else TEXT,True)
+        score = prestige(p)
+        text(screen, 'Престиж',x+223,y+135,100,12,MUTED)
+        screen.blit(resource_icon('prestige'), (x+223, y+152))
+        text(screen,str(score),x+252,y+150,70,22,col,True)
+    # Only the current stage is shown, without numbered progress labels.
+    names = {'start':'Начало хода','event':'Случайное событие','action':'Выбор действия','target':'Выбор соперника','result':'Результат действия','game_over':'Партия завершена'}
+    box(screen, (28, 306, 1384, 64))
+    text(screen, names[phase],48,320,660,26,accent,True)
+    text(screen, actor['name'],770,326,615,19,MUTED,True)
+    # Event remains separate from the action/result.
+    box(screen,(28,386,430,482))
+    ev = game.get('event')
+    text(screen,'СОБЫТИЕ ЭТОГО ХОДА',48,405,390,14,MUTED,True)
+    if ev:
+        col = GREEN if ev['type']=='Положительное' else RED
+        text(screen,ev['type'],48,437,390,15,col,True)
+        y = text(screen,ev['title'],48,473,385,25,TEXT,True)
+        y = text(screen,ev.get('story',''),48,y+16,383,17,MUTED)
+        text(screen,'Фактическое изменение',48,max(y+22,650),383,16,TEXT,True)
+        text(screen,effect(ev.get('actual_changes',ev['changes'])),48,max(y+52,680),380,20,col,True)
+    else:
+        text(screen,'Что принесёт этот ход?',48,465,370,29,TEXT,True)
+        text(screen,'Начните ход, чтобы узнать событие. Оно применяется автоматически к вашему клану.',48,555,375,20,MUTED)
+    # Right main interaction panel.
+    box(screen,(476,386,936,482))
+    def button(label, rect, command, enabled=True, selected=False):
+        r=pygame.Rect(rect)
+        color = accent if selected else (79, 119, 60) if enabled else (220, 226, 204)
+        box(screen,r,color,accent if enabled and r.collidepoint(_pointer) else None)
+        ls=lines(label,r.w-24,17,True)
+        text(screen,label,r.x+12,r.y+(r.h-len(ls)*22)//2,r.w-24,17,(255, 252, 231) if enabled else MUTED,True)
+        if enabled: controls.append((command,r))
+    if phase in ('action','target'):
+        text(screen,'Выберите одно действие',496,402,870,20,TEXT,True)
+        for n,(aid,spec) in enumerate(config.ACTIONS.items()):
+            x=496+n*179
+            enabled=bool(available_targets(game,aid))
+            selected=game['selected_action']==aid
+            box(screen,(x,441,168,167),INNER,accent if selected else None)
+            button(spec['title'],(x+5,446,158,36),'action:'+aid,enabled,selected)
+            text(screen,'ВЫ',x+10,489,150,12,MUTED,True)
+            text(screen,effect(spec['actor_changes']).replace(' / ', '\n'),x+10,507,148,13,TEXT if enabled else MUTED)
+            text(screen,'ЦЕЛЬ: '+effect(spec['target_changes']),x+10,561,148,12,MUTED)
+            if not enabled and pygame.Rect(x,441,168,167).collidepoint(_pointer):
+                reason=action_reason(game,aid) or 'Нет соперника с нужными ресурсами.'
+                text(screen,reason,496,831,870,13,RED)
+        aid=game['selected_action']
+        if aid:
+            text(screen,'Соперник',496,626,870,17,MUTED,True)
+            pos=0
+            for i,p in enumerate(game['players']):
+                if i==game['current']: continue
+                x=496+pos*297
+                reason=target_reason(game,aid,i)
+                button(p['name'],(x,656,283,61),f'target:{i}',reason is None,game['selected_target']==i)
+                if reason: text(screen,reason,x+3,720,278,12,RED)
+                pos+=1
+            button('Подтвердить действие',(1018,774,373,44),'confirm',game['selected_target'] is not None)
+            button('Сбросить выбор',(496,774,245,44),'back')
+        elif not has_legal_action(game):
+            text(screen,'Нет доступных действий: можно передать ход.',496,648,866,20,RED)
+            button('Пропустить действие',(496,742,390,49),'skip')
+        else:
+            text(screen,'Сначала выберите действие, затем соперника.\nРесурсы спишутся только после подтверждения.',496,654,850,21,MUTED)
+    elif phase in ('result','game_over'):
+        text(screen,('Выполнено: '+_report['title']) if _report else 'Итог',496,405,870,25,GREEN,True)
+        if _report:
+            for n,(name,old,new,sp,sn) in enumerate(_report['rows']):
+                x=496+n*450
+                box(screen,(x,449,435,281),INNER)
+                text(screen,name,x+16,462,404,18,accent if n==0 else MUTED,True)
+                yy=520
+                for key in LABELS:
+                    delta=new[key]-old[key]
+                    if delta:
+                        good=delta<0 if key=='smuta' else delta>0
+                        text(screen,LABELS[key],x+16,yy,175,17,MUTED)
+                        text(screen,f'{old[key]} → {new[key]}  ({delta:+d})',x+180,yy,240,19,GREEN if good else RED,True)
+                        yy+=31
+                text(screen,f'Престиж: {sp} → {sn}',x+16,yy+9,404,18,GOLD,True)
+        else:
+            if phase != 'game_over':
+                text(screen,game['message'],496,475,858,23,TEXT)
+        if phase=='game_over':
+            text(screen,game['winner'] or game['message'],496,743 if _report else 495,858,18 if _report else 26,GOLD,True)
+            button('Новая игра',(1080,814,310,40),'restart')
+        else:
+            button('Передать ход',(1050,783,340,56),'next')
+    else:
+        text(screen,'Ваш ход: '+actor['name'],496,432,860,27,TEXT,True)
+        if phase=='start':
+            text(screen,'Сначала случайное событие. Затем одно действие с другим кланом.',496,529,790,24,MUTED)
+            button('Начать ход',(496,700,380,60),'start')
+        else:
+            text(screen,'Событие уже применено. Изменения ресурсов показаны слева и на панелях кланов.',496,529,790,24,MUTED)
+            button('Перейти к действиям',(496,700,410,60),'continue')
+    # Compact log opener; full journal is a scrollable overlay toggled in main.
+    button('Журнал событий',(1130,885,282,47),'ui:log')
+    if game.get('_show_log'):
+        overlay=pygame.Surface((WIDTH,HEIGHT),pygame.SRCALPHA)
+        overlay.fill((30,48,25,155)); screen.blit(overlay,(0,0))
+        box(screen,(135,80,1170,810),PANEL,accent)
+        text(screen,'Журнал партии',165,103,900,29,TEXT,True)
+        text(screen,'Новые записи сверху · прокрутка колёсиком',165,149,1000,17,MUTED)
+        controls.clear()
+        button('Закрыть',(1130,102,145,43),'ui:log')
+        viewport=pygame.Rect(165,196,1110,654)
+        records=list(reversed(game['log']))
+        total=sum(len(lines(e,1060,18))*23+35 for e in records)
+        _log_scroll=min(_log_scroll,max(0,total-viewport.h))
+        screen.set_clip(viewport)
+        yy=viewport.y-_log_scroll
+        for entry in records:
+            h=len(lines(entry,1060,18))*23+21
+            box(screen,(165,yy,1100,h),INNER)
+            text(screen,entry,183,yy+10,1060,18,TEXT)
+            yy+=h+14
+        if not records: text(screen,'Здесь появятся события и результаты действий.',180,215,1000,21,MUTED)
+        screen.set_clip(None)
     return controls
