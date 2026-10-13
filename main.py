@@ -25,8 +25,11 @@ def main():
         mouse=pygame.mouse.get_pos()
         ui.set_pointer(((mouse[0]-offset[0])/factor,(mouse[1]-offset[1])/factor))
         controls=ui.draw(canvas,game)
-        screen.fill(ui.BG)
-        screen.blit(pygame.transform.smoothscale(canvas,size),offset)
+        window_background = pygame.transform.smoothscale(
+            ui.background(), (w, h)
+        )
+        screen.blit(window_background, (0, 0))
+        screen.blit(pygame.transform.smoothscale(canvas, size), offset)
         pygame.display.flip()
         for event in pygame.event.get():
             if event.type==pygame.QUIT:

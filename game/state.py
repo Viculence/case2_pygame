@@ -1,6 +1,6 @@
 """Данные партии и проверка условий завершения."""
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 import config
 
@@ -45,6 +45,7 @@ class GameState(TypedDict):
     winner: str | None
     message: str
     log: list[str]
+    _show_log: NotRequired[bool]
 
 
 def new_game() -> GameState:
